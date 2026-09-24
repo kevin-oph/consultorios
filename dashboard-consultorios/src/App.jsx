@@ -1,165 +1,160 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Navbar from './components/Navbar';
 import KPICards from './components/KPICards';
 import ChartsSection from './components/ChartsSection';
 import PatientsTable from './components/PatientsTable';
-import { Loader2, AlertCircle, Filter, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [data, setData] = useState([]);
-  const [filteredData, setFilteredData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // Estados para los filtros (por defecto en 'TODOS' para ver el universo completo)
   const [selectedMunicipio, setSelectedMunicipio] = useState('TODOS');
   const [selectedColonia, setSelectedColonia] = useState('TODAS');
+  const [searchTerm, setSearchTerm] = useState('');
 
+  // Cargar el JSON de datos procesados
   useEffect(() => {
     fetch('/data/datos_consultorios.json')
-      .then(response => {
-        if (!response.ok) throw new Error('No se pudo cargar el archivo de datos.');
-        return response.json();
-      })
-      .then(jsonData => {
+      .then((res) => res.json())
+      .then((jsonData) => {
         setData(jsonData);
-        // Mostramos todo el universo de datos por defecto para tener visibilidad total
-        setFilteredData(jsonData);
         setLoading(false);
       })
-      .catch(err => {
-        console.error("Error al cargar los datos:", err);
-        setError(err.message);
+      .catch((err) => {
+        console.error('Error cargando los datos:', err);
         setLoading(false);
       });
   }, []);
 
-  // Efecto para aplicar los filtros dinámicamente
-  useEffect(() => {
-    if (data.length === 0) return;
+  // Obtener listas únicas para los filtros desplegables
+  const municipios = useMemo(() => {
+    const setM = new Set(data.map(item => item.MUNICIPIO).filter(Boolean));
+    return ['TODOS', ...Array.from(setM)].sort();
+  }, [data]);
 
-    let result = data;
-
+  const colonias = useMemo(() => {
+    let filtered = data;
     if (selectedMunicipio !== 'TODOS') {
-      result = result.filter(item => (item.MUNICIPIO || 'NO CAPTURADO').toUpperCase() === selectedMunicipio);
+      filtered = data.filter(item => item.MUNICIPIO === selectedMunicipio);
     }
+    const setC = new Set(filtered.map(item => item.COLONIA).filter(Boolean));
+    return ['TODAS', ...Array.from(setC)].sort();
+  }, [data, selectedMunicipio]);
 
-    if (selectedColonia !== 'TODAS') {
-      result = result.filter(item => (item.COLONIA || 'NO CAPTURADO').toUpperCase() === selectedColonia);
-    }
+  // Filtrado general de datos
+  const filteredData = useMemo(() => {
+    return data.filter(item => {
+      const matchMun = selectedMunicipio === 'TODOS' || item.MUNICIPIO === selectedMunicipio;
+      const matchCol = selectedColonia === 'TODAS' || item.COLONIA === selectedColonia;
+      const matchSearch = searchTerm === '' || 
+        Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase()));
+      return matchMun && matchCol && matchSearch;
+    });
+  }, [data, selectedMunicipio, selectedColonia, searchTerm]);
 
-    setFilteredData(result);
-  }, [selectedMunicipio, selectedColonia, data]);
+  // Cálculos analíticos robustos
+  const totalRecords = filteredData.length;
 
-  // Obtener listas únicas para los selectores (incluyendo "NO CAPTURADO")
-  const municipiosList = ['TODOS', ...new Set(data.map(item => (item.MUNICIPIO || 'NO CAPTURADO').toUpperCase()))].sort();
-  
-  const coloniasList = ['TODAS', ...new Set(
-    data
-      .filter(item => selectedMunicipio === 'TODOS' || (item.MUNICIPIO || 'NO CAPTURADO').toUpperCase() === selectedMunicipio)
-      .map(item => (item.COLONIA || 'NO CAPTURADO').toUpperCase())
-  )].sort();
+  // Atenciones reales basadas en transacciones unificadas (REFERENCIA DE VENTA)
+  const uniqueVisits = useMemo(() => {
+    const refs = new Set(filteredData.map(item => item['REFERENCIA DE VENTA']).filter(Boolean));
+    return refs.size > 0 ? refs.size : totalRecords;
+  }, [filteredData, totalRecords]);
+
+  // Pacientes únicos basados en CURP
+  const uniquePatients = useMemo(() => {
+    const curps = new Set(filteredData.map(item => item.CURP).filter(Boolean));
+    return Array.from(curps);
+  }, [filteredData]);
+
+  const uniquePatientsCount = uniquePatients.length;
+
+  // Promedio de consultas por paciente único (Índice de seguimiento)
+  const avgVisits = useMemo(() => {
+    if (uniquePatientsCount === 0) return 0;
+    return (uniqueVisits / uniquePatientsCount).toFixed(1);
+  }, [uniqueVisits, uniquePatientsCount]);
+
+  // Ubicaciones geográficas únicas atendidas
+  const uniqueLocationsCount = useMemo(() => {
+    const locs = new Set(filteredData.map(item => item.COLONIA).filter(Boolean));
+    return locs.size;
+  }, [filteredData]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center text-blue-900">
-        <Loader2 className="animate-spin mb-3" size={48} />
-        <p className="font-semibold text-lg">Cargando inteligencia territorial...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center text-red-600">
-        <AlertCircle size={48} className="mb-3" />
-        <p className="font-bold text-lg">Ocurrió un error</p>
-        <p className="text-sm text-gray-600 mt-1">{error}</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-800 mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Cargando inteligencia territorial y operativa...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 text-gray-900">
+    <div className="min-h-screen bg-gray-100 text-gray-900 pb-12">
       <Navbar />
-      
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+      <main className="max-w-7xl mx-auto px-4 space-y-6">
         
-        {/* BARRA DE FILTROS TERRITORIALES */}
-        <div className="bg-white rounded-xl shadow-md p-5 mb-6 border border-gray-200">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="bg-blue-100 p-2 rounded-lg text-blue-700">
-                <Filter size={20} />
-              </div>
-              <div>
-                <h3 className="font-bold text-gray-800 text-base">Filtro Territorial y Operativo</h3>
-                <p className="text-xs text-gray-500">Visualiza el total estatal, municipal, foráneos y registros sin captura</p>
-              </div>
-            </div>
+        {/* Tarjetas KPI expandidas con el promedio de consultas */}
+        <KPICards 
+          totalRecords={totalRecords}
+          uniqueVisits={uniqueVisits}
+          uniquePatientsCount={uniquePatientsCount}
+          uniqueLocationsCount={uniqueLocationsCount}
+          avgVisits={avgVisits}
+        />
 
-            <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-              {/* Selector de Municipio */}
-              <div className="flex flex-col text-xs">
-                <label className="font-semibold text-gray-600 mb-1">Municipio:</label>
-                <select 
-                  className="bg-gray-50 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={selectedMunicipio}
-                  onChange={(e) => {
-                    setSelectedMunicipio(e.target.value);
-                    setSelectedColonia('TODAS');
-                  }}
-                >
-                  {municipiosList.map((mun, idx) => (
-                    <option key={idx} value={mun}>{mun}</option>
-                  ))}
-                </select>
-              </div>
+        {/* Sección de Filtros Operativos */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div>
+            <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+              Filtro Territorial y Operativo
+            </h2>
+            <p className="text-xs text-gray-500">Visualiza el total estatal, municipal, foráneos y registros sin captura</p>
+          </div>
 
-              {/* Selector de Colonia */}
-              <div className="flex flex-col text-xs">
-                <label className="font-semibold text-gray-600 mb-1">Colonia / Localidad:</label>
-                <select 
-                  className="bg-gray-50 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none max-w-xs"
-                  value={selectedColonia}
-                  onChange={(e) => setSelectedColonia(e.target.value)}
-                >
-                  {coloniasList.map((col, idx) => (
-                    <option key={idx} value={col}>{col}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Botón de limpiar filtros */}
-              <button 
-                onClick={() => {
-                  setSelectedMunicipio('TODOS');
-                  setSelectedColonia('TODAS');
-                }}
-                className="mt-4 md:mt-0 flex items-center gap-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
-                title="Mostrar todo"
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <div className="flex flex-col">
+              <label className="text-[11px] font-semibold text-gray-600 mb-1">Municipio:</label>
+              <select 
+                value={selectedMunicipio} 
+                onChange={(e) => { setSelectedMunicipio(e.target.value); setSelectedColonia('TODAS'); }}
+                className="bg-gray-50 border border-gray-300 text-gray-800 text-xs rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500"
               >
-                <RefreshCw size={14} />
-                <span>Ver Todo</span>
-              </button>
+                {municipios.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
             </div>
+
+            <div className="flex flex-col">
+              <label className="text-[11px] font-semibold text-gray-600 mb-1">Colonia / Localidad:</label>
+              <select 
+                value={selectedColonia} 
+                onChange={(e) => setSelectedColonia(e.target.value)}
+                className="bg-gray-50 border border-gray-300 text-gray-800 text-xs rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500"
+              >
+                {colonias.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <button 
+              onClick={() => { setSelectedMunicipio('TODOS'); setSelectedColonia('TODAS'); setSearchTerm(''); }}
+              className="mt-5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-2 rounded-lg transition"
+            >
+              Ver Todo
+            </button>
           </div>
         </div>
 
-        {/* MÉTRICAS (KPIs) DINÁMICAS */}
-        <KPICards data={filteredData} />
-
-        {/* GRÁFICAS */}
+        {/* Sección de Gráficos Analíticos */}
         <ChartsSection data={filteredData} />
 
-        {/* TABLA DETALLADA DE CONTACTO */}
-        <PatientsTable data={filteredData} />
+        {/* Directorio / Tabla de Pacientes */}
+        <PatientsTable data={filteredData} searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
 
       </main>
-
-      <footer className="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-500">
-        Municipio de Emiliano Zapata &bull; Dirección de Sistemas y Desarrollo Tecnológico © 2026
-      </footer>
     </div>
   );
 }
