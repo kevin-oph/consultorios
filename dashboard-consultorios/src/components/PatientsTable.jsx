@@ -1,191 +1,172 @@
-import React, { useState, useMemo } from 'react';
-import { Search, UserCheck, ChevronLeft, ChevronRight, ArrowUpDown, Download } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Users, Search, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
-export default function PatientsTable({ data }) {
-  const [searchTerm, setSearchTerm] = useState('');
+export default function PatientsTable({ data, searchTerm, setSearchTerm }) {
   const [currentPage, setCurrentPage] = useState(1);
-  const [sortByVisits, setSortByVisits] = useState(true);
-  const itemsPerPage = 50;
+  const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
+  const pageSize = 15;
 
-  // Agrupar y unificar por CURP (Paciente único) calculando VISITAS REALES por folios distintos
-  const aggregatedPatients = useMemo(() => {
+  // Optimización de rendimiento: Retrasa ligeramente la búsqueda para evitar tirones al teclear rápido
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+      setCurrentPage(1); // Regresar a la página 1 al buscar
+    }, 200);
+
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  // Agrupar pacientes únicos por CURP de manera optimizada
+  const pacientesUnicos = useMemo(() => {
     const map = {};
-    
-    data.forEach(item => {
-      const curp = item.CURP && item.CURP !== 'NO CAPTURADO' ? item.CURP : (item.NOMBRE + '-' + Math.random());
-      const referenciaVenta = String(item['REFERENCIA DE VENTA'] || '').trim();
+    for (let i = 0; i < data.length; i++) {
+      const item = data[i];
+      const curp = item.CURP || item.curp || 'SIN_CURP';
       
+      let nombrePaciente = 'No Capturado';
+      for (const key of Object.keys(item)) {
+        const upperKey = key.toUpperCase();
+        if ((upperKey.includes('NOMBRE') || upperKey.includes('PACIENTE') || upperKey.includes('CIUDADANO')) && item[key]) {
+          nombrePaciente = item[key];
+          break;
+        }
+      }
+
+      if (nombrePaciente === 'No Capturado') {
+        nombrePaciente = item.PACIENTE || item.CIUDADANO || item.NOMBRE || item.NOMBRE_PACIENTE || item.COMPLETO || 'No Capturado';
+      }
+
+      let telefonoPaciente = 'NO CAPTURADO';
+      for (const key of Object.keys(item)) {
+        const upperKey = key.toUpperCase();
+        if ((upperKey.includes('TEL') || upperKey.includes('CELULAR') || upperKey.includes('MOVIL')) && item[key]) {
+          telefonoPaciente = item[key];
+          break;
+        }
+      }
+
       if (!map[curp]) {
         map[curp] = {
-          nombre: item.NOMBRE || 'SIN DATO',
-          curp: item.CURP || 'SIN CAPTURAR',
-          colonia: item.COLONIA || 'SIN DATO',
-          municipio: item.MUNICIPIO || 'SIN DATO',
-          celular: item['T. CELULAR'] || item['T_CELULAR'] || item['CELULAR'] || 'NO CAPTURADO',
-          referencesSet: new Set(), // Usamos un Set para almacenar folios únicos de visita
+          nombre: String(nombrePaciente).trim(),
+          curp: curp,
+          colonia: item.COLONIA || item.colonia || 'No Capturado',
+          municipio: item.MUNICIPIO || item.municipio || 'No Capturado',
+          telefono: String(telefonoPaciente).trim(),
+          visitasCount: 1
         };
+      } else {
+        if (map[curp].nombre === 'No Capturado' && nombrePaciente !== 'No Capturado') {
+          map[curp].nombre = String(nombrePaciente).trim();
+        }
+        map[curp].visitasCount += 1;
       }
-      
-      if (referenciaVenta) {
-        map[curp].referencesSet.add(referenciaVenta);
-      }
-    });
-
-    // Convertir el Set a un número exacto de visitas reales
-    return Object.values(map).map(patient => ({
-      ...patient,
-      totalVisitas: patient.referencesSet.size > 0 ? patient.referencesSet.size : 1
-    }));
+    }
+    return Object.values(map);
   }, [data]);
 
-  // Filtrar y ordenar
+  // Filtrado optimizado sobre las propiedades directas
   const filteredPatients = useMemo(() => {
-    const term = searchTerm.toLowerCase();
-    const result = aggregatedPatients.filter(p => 
-      p.nombre.toLowerCase().includes(term) ||
-      p.curp.toLowerCase().includes(term) ||
-      p.colonia.toLowerCase().includes(term) ||
-      p.celular.toLowerCase().includes(term)
+    const query = debouncedSearch.toLowerCase().trim();
+    if (!query) return pacientesUnicos;
+
+    return pacientesUnicos.filter(p => 
+      p.nombre.toLowerCase().includes(query) ||
+      p.curp.toLowerCase().includes(query) ||
+      p.colonia.toLowerCase().includes(query) ||
+      p.municipio.toLowerCase().includes(query)
     );
+  }, [pacientesUnicos, debouncedSearch]);
 
-    return result.sort((a, b) => {
-      if (sortByVisits) {
-        return b.totalVisitas - a.totalVisitas; // Más visitas primero
-      } else {
-        return a.nombre.localeCompare(b.nombre); // Alfabético
-      }
+  // Paginación limpia de 15 en 15
+  const totalPages = Math.ceil(filteredPatients.length / pageSize) || 1;
+  const paginatedPatients = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredPatients.slice(start, start + pageSize);
+  }, [filteredPatients, currentPage, pageSize]);
+
+  // Exportar a Excel
+  const exportToExcel = () => {
+    let csvContent = "data:text/csv;charset=utf-8,PACIENTE,CURP,COLONIA,MUNICIPIO,VISITAS,TELEFONO\n";
+    pacientesUnicos.forEach(p => {
+      csvContent += `"${p.nombre}","${p.curp}","${p.colonia}","${p.municipio}",${p.visitasCount},"${p.telefono}"\n`;
     });
-  }, [aggregatedPatients, searchTerm, sortByVisits]);
-
-  // Paginación
-  const totalPages = Math.ceil(filteredPatients.length / itemsPerPage) || 1;
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const currentPatients = filteredPatients.slice(startIndex, startIndex + itemsPerPage);
-
-  const handleSearchChange = (e) => {
-    setSearchTerm(e.target.value);
-    setCurrentPage(1);
-  };
-
-  // Función para exportar los datos filtrados a CSV (compatible con Excel)
-  const exportToCSV = () => {
-    const headers = ['NOMBRE', 'CURP', 'COLONIA', 'MUNICIPIO', 'VISITAS_REALES', 'CELULAR'];
-    const csvRows = [headers.join(',')];
-
-    filteredPatients.forEach(p => {
-      const row = [
-        `"${p.nombre}"`,
-        `"${p.curp}"`,
-        `"${p.colonia}"`,
-        `"${p.municipio}"`,
-        p.totalVisitas,
-        `"${p.celular}"`
-      ];
-      csvRows.push(row.join(','));
-    });
-
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'directorio_consultorios_emiliano_zapata.csv');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "directorio_pacientes_unicos.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden mb-8">
-      <div className="p-5 border-b border-gray-100 flex flex-col lg:flex-row justify-between items-center gap-4">
+    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+      <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-3">
         <div>
-          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <UserCheck className="text-blue-600" size={20} />
+          <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+            <Users size={18} className="text-emerald-600" />
             Directorio Único de Ciudadanos Atendidos
           </h3>
-          <p className="text-xs text-gray-500">
-            Mostrando pacientes únicos ({filteredPatients.length.toLocaleString()} encontrados en total)
-          </p>
+          <p className="text-xs text-gray-500">Mostrando pacientes únicos ({filteredPatients.length} encontrados en total)</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-          {/* Botón de Exportar a Excel/CSV */}
-          <button
-            onClick={exportToCSV}
-            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors shadow-sm"
-            title="Descargar lista filtrada en Excel"
-          >
-            <Download size={15} />
-            <span>Exportar a Excel</span>
-          </button>
-
-          {/* Botón Ordenar */}
-          <button
-            onClick={() => {
-              setSortByVisits(!sortByVisits);
-              setCurrentPage(1);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
-              sortByVisits 
-                ? 'bg-blue-50 text-blue-700 border-blue-200' 
-                : 'bg-gray-50 text-gray-700 border-gray-200'
-            }`}
-          >
-            <ArrowUpDown size={14} />
-            <span>{sortByVisits ? 'Más Frecuentes 🥇' : 'Alfabético (A-Z)'}</span>
-          </button>
-
-          {/* Buscador */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <div className="relative w-full sm:w-64">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
-              <Search size={18} />
+              <Search size={16} />
             </span>
-            <input
-              type="text"
-              className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Buscar por Nombre, CURP..."
+            <input 
+              type="text" 
+              placeholder="Buscar por Nombre, CURP..." 
               value={searchTerm}
-              onChange={handleSearchChange}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="bg-gray-50 border border-gray-300 text-gray-800 text-xs rounded-lg pl-9 pr-3 py-2 w-full focus:ring-emerald-500 focus:border-emerald-500"
             />
           </div>
+
+          <button 
+            onClick={exportToExcel}
+            className="bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1.5 shrink-0"
+          >
+            <Download size={14} />
+            Exportar a Excel
+          </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Tabla */}
+      <div className="overflow-x-auto border border-gray-100 rounded-lg">
         <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-gray-50 text-gray-600 uppercase text-xs tracking-wider border-b border-gray-100">
-              <th className="py-3 px-4 font-semibold">Ciudadano / Paciente</th>
-              <th className="py-3 px-4 font-semibold">CURP</th>
-              <th className="py-3 px-4 font-semibold">Colonia</th>
-              <th className="py-3 px-4 font-semibold">Municipio</th>
-              <th className="py-3 px-4 font-semibold text-center">Visitas Reales</th>
-              <th className="py-3 px-4 font-semibold">Teléfono Celular</th>
+          <thead className="bg-gray-50 text-[11px] font-semibold text-gray-600 uppercase border-b border-gray-200">
+            <tr>
+              <th className="py-2.5 px-4">Ciudadano / Paciente</th>
+              <th className="py-2.5 px-4">CURP</th>
+              <th className="py-2.5 px-4">Colonia</th>
+              <th className="py-2.5 px-4">Municipio</th>
+              <th className="py-2.5 px-4 text-center">Visitas Reales</th>
+              <th className="py-2.5 px-4">Teléfono Celular</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
-            {currentPatients.length > 0 ? (
-              currentPatients.map((row, index) => (
-                <tr key={index} className="hover:bg-gray-50/80 transition-colors">
-                  <td className="py-3 px-4 font-medium text-gray-900">{row.nombre}</td>
-                  <td className="py-3 px-4 font-mono text-xs text-gray-600">{row.curp}</td>
-                  <td className="py-3 px-4">{row.colonia}</td>
-                  <td className="py-3 px-4">{row.municipio}</td>
-                  <td className="py-3 px-4 text-center">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                      row.totalVisitas > 3 
-                        ? 'bg-amber-100 text-amber-800' 
-                        : 'bg-emerald-50 text-emerald-700'
-                    }`}>
-                      {row.totalVisitas} {row.totalVisitas === 1 ? 'visita' : 'visitas'}
+          <tbody className="divide-y divide-gray-100 text-xs">
+            {paginatedPatients.length > 0 ? (
+              paginatedPatients.map((p, idx) => (
+                <tr key={idx} className="hover:bg-gray-50/80 transition">
+                  <td className="py-2.5 px-4 font-semibold text-gray-800">{p.nombre}</td>
+                  <td className="py-2.5 px-4 text-gray-600 font-mono text-[11px]">{p.curp}</td>
+                  <td className="py-2.5 px-4 text-gray-600">{p.colonia}</td>
+                  <td className="py-2.5 px-4 text-gray-600">{p.municipio}</td>
+                  <td className="py-2.5 px-4 text-center">
+                    <span className="bg-amber-50 text-amber-700 font-bold px-2 py-0.5 rounded-full text-[11px] border border-amber-200">
+                      {p.visitasCount} visitas
                     </span>
                   </td>
-                  <td className="py-3 px-4 font-medium text-blue-600">{row.celular}</td>
+                  <td className="py-2.5 px-4 text-blue-600 font-medium">{p.telefono}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan="6" className="py-8 text-center text-gray-400">
-                  No se encontraron ciudadanos coincidentes con la búsqueda.
+                <td colSpan="6" className="py-8 text-center text-gray-400 text-xs">
+                  No se encontraron registros que coincidan con la búsqueda.
                 </td>
               </tr>
             )}
@@ -193,30 +174,25 @@ export default function PatientsTable({ data }) {
         </table>
       </div>
 
-      {/* PAGINACIÓN */}
-      <div className="p-4 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-50/50">
+      {/* Controles de Paginación */}
+      <div className="flex items-center justify-between mt-4 px-2">
         <span className="text-xs text-gray-500">
-          Página <span className="font-semibold text-gray-700">{currentPage}</span> de <span className="font-semibold text-gray-700">{totalPages}</span> 
-          {' '}(Mostrando hasta {itemsPerPage} registros por página)
+          Página <span className="font-semibold text-gray-700">{currentPage}</span> de <span className="font-semibold text-gray-700">{totalPages}</span>
         </span>
-
-        <div className="flex items-center space-x-2">
-          <button
+        <div className="flex items-center gap-2">
+          <button 
             onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
             disabled={currentPage === 1}
-            className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 text-xs font-semibold rounded-lg transition flex items-center gap-1"
           >
-            <ChevronLeft size={16} />
-            <span>Anterior</span>
+            <ChevronLeft size={14} /> Anterior
           </button>
-
-          <button
+          <button 
             onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
             disabled={currentPage === totalPages}
-            className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-medium bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 text-xs font-semibold rounded-lg transition flex items-center gap-1"
           >
-            <span>Siguiente</span>
-            <ChevronRight size={16} />
+            Siguiente <ChevronRight size={14} />
           </button>
         </div>
       </div>

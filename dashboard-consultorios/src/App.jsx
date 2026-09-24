@@ -3,6 +3,7 @@ import Navbar from './components/Navbar';
 import KPICards from './components/KPICards';
 import ChartsSection from './components/ChartsSection';
 import PatientsTable from './components/PatientsTable';
+import MedicamentosTable from './components/MedicamentosTable';
 
 export default function App() {
   const [data, setData] = useState([]);
@@ -40,45 +41,39 @@ export default function App() {
     return ['TODAS', ...Array.from(setC)].sort();
   }, [data, selectedMunicipio]);
 
-  // Filtrado general de datos
-  const filteredData = useMemo(() => {
+  // 1. DATOS GLOBALES PARA KPIS Y GRÁFICAS (Estables y sin bloqueo por teclado)
+  const globalFilteredData = useMemo(() => {
     return data.filter(item => {
       const matchMun = selectedMunicipio === 'TODOS' || item.MUNICIPIO === selectedMunicipio;
       const matchCol = selectedColonia === 'TODAS' || item.COLONIA === selectedColonia;
-      const matchSearch = searchTerm === '' || 
-        Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase()));
-      return matchMun && matchCol && matchSearch;
+      return matchMun && matchCol;
     });
-  }, [data, selectedMunicipio, selectedColonia, searchTerm]);
+  }, [data, selectedMunicipio, selectedColonia]);
 
   // Cálculos analíticos robustos
-  const totalRecords = filteredData.length;
+  const totalRecords = globalFilteredData.length;
 
-  // Atenciones reales basadas en transacciones unificadas (REFERENCIA DE VENTA)
   const uniqueVisits = useMemo(() => {
-    const refs = new Set(filteredData.map(item => item['REFERENCIA DE VENTA']).filter(Boolean));
+    const refs = new Set(globalFilteredData.map(item => item['REFERENCIA DE VENTA']).filter(Boolean));
     return refs.size > 0 ? refs.size : totalRecords;
-  }, [filteredData, totalRecords]);
+  }, [globalFilteredData, totalRecords]);
 
-  // Pacientes únicos basados en CURP
   const uniquePatients = useMemo(() => {
-    const curps = new Set(filteredData.map(item => item.CURP).filter(Boolean));
+    const curps = new Set(globalFilteredData.map(item => item.CURP).filter(Boolean));
     return Array.from(curps);
-  }, [filteredData]);
+  }, [globalFilteredData]);
 
   const uniquePatientsCount = uniquePatients.length;
 
-  // Promedio de consultas por paciente único (Índice de seguimiento)
   const avgVisits = useMemo(() => {
     if (uniquePatientsCount === 0) return 0;
     return (uniqueVisits / uniquePatientsCount).toFixed(1);
   }, [uniqueVisits, uniquePatientsCount]);
 
-  // Ubicaciones geográficas únicas atendidas
   const uniqueLocationsCount = useMemo(() => {
-    const locs = new Set(filteredData.map(item => item.COLONIA).filter(Boolean));
+    const locs = new Set(globalFilteredData.map(item => item.COLONIA).filter(Boolean));
     return locs.size;
-  }, [filteredData]);
+  }, [globalFilteredData]);
 
   if (loading) {
     return (
@@ -97,7 +92,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 space-y-6">
         
-        {/* Tarjetas KPI expandidas con el promedio de consultas */}
+        {/* Tarjetas KPI */}
         <KPICards 
           totalRecords={totalRecords}
           uniqueVisits={uniqueVisits}
@@ -105,6 +100,9 @@ export default function App() {
           uniqueLocationsCount={uniqueLocationsCount}
           avgVisits={avgVisits}
         />
+
+        {/* Sección de Gráficos Analíticos */}
+        <ChartsSection data={globalFilteredData} />
 
         {/* Sección de Filtros Operativos */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -148,11 +146,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* Sección de Gráficos Analíticos */}
-        <ChartsSection data={filteredData} />
+        {/* Directorio de Pacientes */}
+        <PatientsTable data={globalFilteredData} searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
 
-        {/* Directorio / Tabla de Pacientes */}
-        <PatientsTable data={filteredData} searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+        {/* Tabla General de Medicamentos */}
+        <MedicamentosTable data={globalFilteredData} />
 
       </main>
     </div>
